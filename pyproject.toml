@@ -1,0 +1,30 @@
+[project]
+name = "qwen-agent-proxy"
+version = "0.1.0"
+description = "OpenAI-compatible proxy that separates Qwen reasoning and tool calling for agent clients."
+readme = "README.md"
+requires-python = ">=3.11"
+license = "MIT"
+dependencies = [
+  "fastapi",
+  "uvicorn",
+  "httpx",
+  "pydantic",
+  "tomli; python_version < '3.11'",
+]
+
+[dependency-groups]
+dev = [
+  "pytest",
+  "pytest-asyncio",
+  "ruff",
+]
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+testpaths = ["tests"]
+pythonpath = ["."]

@@ -1,0 +1,38 @@
+[server]
+host = "127.0.0.1"
+port = 9011
+
+[upstream]
+base_url = "http://127.0.0.1:8000/v1"
+api_key = "<dummy>"
+model = "<your model name>"
+thinking_param_style = "extra_body"
+
+[agent]
+public_model_id = "qwen-agent"
+max_tool_retries = 2
+streaming = false
+log_requests = true
+log_upstream = true
+
+[planner]
+enable_thinking = true
+temperature = 0.2
+max_tokens = 4096
+
+[tool_caller]
+enable_thinking = false
+temperature = 0.0
+max_tokens = 2048
+
+[finalizer]
+enable_thinking = true
+temperature = 0.3
+max_tokens = 8192
+
+[repair]
+extract_xml_tool_call = true
+extract_reasoning_content_tool_call = true
+json_repair = true
+validate_tool_name = true
+strip_think = true
