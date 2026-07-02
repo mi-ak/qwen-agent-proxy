@@ -81,7 +81,11 @@ class OpenAICompatibleUpstream:
 
     def _apply_thinking_param(self, payload: dict[str, Any], enable_thinking: bool) -> None:
         style = self.config.thinking_param_style
-        if style == "extra_body":
+        if style == "chat_template_kwargs":
+            payload["chat_template_kwargs"] = {"enable_thinking": enable_thinking}
+        elif style == "extra_body_chat_template_kwargs":
+            payload["extra_body"] = {"chat_template_kwargs": {"enable_thinking": enable_thinking}}
+        elif style == "extra_body":
             payload["extra_body"] = {"enable_thinking": enable_thinking}
         elif style == "top_level":
             payload["enable_thinking"] = enable_thinking

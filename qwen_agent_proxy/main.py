@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 from typing import Any
 
 from fastapi import FastAPI, HTTPException, Request
@@ -31,7 +32,10 @@ async def models() -> dict[str, Any]:
 
 @app.post("/v1/chat/completions", response_model=None)
 async def chat_completions(request: Request) -> dict[str, Any] | StreamingResponse:
-    payload = await request.json()
+    try:
+        payload = await request.json()
+    except json.JSONDecodeError as exc:
+        raise HTTPException(status_code=400, detail="request body must be valid JSON") from exc
     if not isinstance(payload, dict):
         raise HTTPException(status_code=400, detail="request body must be a JSON object")
 

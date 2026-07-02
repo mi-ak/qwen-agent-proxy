@@ -79,20 +79,15 @@ Config loading order:
 Example:
 
 ```toml
-[server]
-host = "127.0.0.1"
-port = 9011
-
 [upstream]
 base_url = "http://127.0.0.1:8000/v1"
 api_key = "dummy"
-model = "Qwen3.6-27B-MTPLX-Optimized-Speed"
-thinking_param_style = "extra_body"
+model = "Qwen/Qwen3-8B"
+thinking_param_style = "chat_template_kwargs"
 
 [agent]
 public_model_id = "qwen-agent"
 max_tool_retries = 2
-streaming = false
 log_requests = true
 log_upstream = true
 
@@ -110,19 +105,14 @@ max_tokens = 2048
 enable_thinking = true
 temperature = 0.3
 max_tokens = 8192
-
-[repair]
-extract_xml_tool_call = true
-extract_reasoning_content_tool_call = true
-json_repair = true
-validate_tool_name = true
-strip_think = true
 ```
 
 `thinking_param_style` supports:
 
-- `extra_body`: sends `{"extra_body":{"enable_thinking":true}}`
-- `top_level`: sends `{"enable_thinking":true}`
+- `chat_template_kwargs`: sends `{"chat_template_kwargs":{"enable_thinking":true}}`
+- `extra_body_chat_template_kwargs`: sends `{"extra_body":{"chat_template_kwargs":{"enable_thinking":true}}}`
+- `extra_body`: legacy style; sends `{"extra_body":{"enable_thinking":true}}`
+- `top_level`: legacy style; sends `{"enable_thinking":true}`
 - `disabled`: sends no thinking parameter
 
 ## Run
@@ -135,20 +125,31 @@ uv run uvicorn qwen_agent_proxy.main:app --host 127.0.0.1 --port 9011
 
 The upstream must expose an OpenAI-compatible `/v1/chat/completions` endpoint.
 
-OMLX / MLX-style local server:
+vLLM with current Qwen chat templates:
+
+```bash
+vllm serve Qwen/Qwen3-8B \
+  --enable-auto-tool-choice \
+  --tool-call-parser hermes \
+  --enable-reasoning \
+  --reasoning-parser qwen3
+```
 
 ```toml
 [upstream]
 base_url = "http://127.0.0.1:8000/v1"
 api_key = "dummy"
-model = "Qwen3.6-27B-MTPLX-Optimized-Speed"
-thinking_param_style = "extra_body"
+model = "Qwen/Qwen3-8B"
+thinking_param_style = "chat_template_kwargs"
 ```
 
 llama.cpp server:
 
 ```bash
-llama-server --host 127.0.0.1 --port 8000 --jinja -hf Qwen/Qwen3-8B-GGUF
+llama-server --host 127.0.0.1 --port 8000 \
+  --jinja \
+  --reasoning-format deepseek \
+  -hf Qwen/Qwen3-8B-GGUF
 ```
 
 ```toml
@@ -166,12 +167,19 @@ LM Studio:
 base_url = "http://127.0.0.1:1234/v1"
 api_key = "dummy"
 model = "qwen3-local"
-thinking_param_style = "top_level"
+thinking_param_style = "disabled"
 ```
 
-If an upstream rejects unknown fields, set `thinking_param_style = "disabled"`.
+Some local servers expose their own non-standard thinking switch. If an upstream
+rejects unknown fields, set `thinking_param_style = "disabled"` or use the
+server's non-thinking chat template for Tool Caller traffic.
 
 ## VS Code BYOK
+
+VS Code's Custom Endpoint provider supports Chat Completions, Responses, and
+Messages API endpoints. Configure this proxy as a Chat Completions endpoint and
+keep `toolCalling` enabled; VS Code only shows models for agent use when the
+model declares tool-calling support.
 
 Example `chatLanguageModels.json`:
 
@@ -242,7 +250,8 @@ curl http://127.0.0.1:9011/v1/chat/completions \
 
 ## Repair Behavior
 
-The proxy normalizes these forms into OpenAI-compatible `tool_calls`:
+The proxy always strips Qwen thinking content from client-visible messages and
+normalizes these forms into OpenAI-compatible `tool_calls`:
 
 ```xml
 <tool_call>
@@ -259,7 +268,8 @@ The proxy normalizes these forms into OpenAI-compatible `tool_calls`:
 ```
 
 Invalid JSON arguments are rejected. Unknown tool names are rejected based on
-the names supplied in `tools[*].function.name`.
+the names supplied in `tools[*].function.name`. These safety checks are not
+configurable because they are part of the client compatibility contract.
 
 ## Logs
 
@@ -309,7 +319,7 @@ If tool calls are missing:
 If `<think>` leaks:
 
 - Ensure traffic goes through this proxy, not directly to the upstream server.
-- Check that `[repair].strip_think = true`.
+- Capture the upstream response and add a focused `strip_think` regression test.
 
 ## License
 

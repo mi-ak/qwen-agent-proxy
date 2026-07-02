@@ -4,8 +4,11 @@ import json
 import re
 from typing import Any
 
-THINK_RE = re.compile(r"<think\b[^>]*>.*?</think>", re.IGNORECASE | re.DOTALL)
+THINK_BLOCK_RE = re.compile(r"<think\b[^>]*>.*?</think>", re.IGNORECASE | re.DOTALL)
+THINK_CLOSE_PREFIX_RE = re.compile(r"^.*?</think>", re.IGNORECASE | re.DOTALL)
+UNTERMINATED_THINK_RE = re.compile(r"<think\b[^>]*>.*\Z", re.IGNORECASE | re.DOTALL)
 TOOL_CALL_RE = re.compile(r"<tool_call\b[^>]*>(.*?)</tool_call>", re.IGNORECASE | re.DOTALL)
+UNTERMINATED_TOOL_CALL_RE = re.compile(r"<tool_call\b[^>]*>.*\Z", re.IGNORECASE | re.DOTALL)
 FUNCTION_TAG_RE = re.compile(r"<function=([A-Za-z_][A-Za-z0-9_.:-]*)\s*>(.*?)</function>", re.DOTALL)
 PARAMETER_TAG_RE = re.compile(
     r"<parameter(?:\s+|=)([A-Za-z_][A-Za-z0-9_.:-]*)\s*>(.*?)</parameter>",
@@ -17,7 +20,22 @@ FENCE_RE = re.compile(r"^\s*```(?:json)?\s*(.*?)\s*```\s*$", re.IGNORECASE | re.
 def strip_think(text: str) -> str:
     if not text:
         return ""
-    return THINK_RE.sub("", text).strip()
+    stripped = THINK_BLOCK_RE.sub("", text)
+    stripped = THINK_CLOSE_PREFIX_RE.sub("", stripped, count=1)
+    stripped = UNTERMINATED_THINK_RE.sub("", stripped)
+    return stripped.strip()
+
+
+def strip_tool_call_markup(text: str) -> str:
+    if not text:
+        return ""
+    stripped = TOOL_CALL_RE.sub("", text)
+    stripped = UNTERMINATED_TOOL_CALL_RE.sub("", stripped)
+    return stripped.strip()
+
+
+def strip_client_visible_artifacts(text: str) -> str:
+    return strip_tool_call_markup(strip_think(text))
 
 
 def extract_xml_tool_calls(text: str) -> list[dict[str, Any]]:

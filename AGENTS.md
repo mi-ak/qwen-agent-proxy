@@ -93,6 +93,8 @@ If Planner output is invalid, use the safe fallback in
 - Do not accept tool names outside `tools[*].function.name`.
 - Do not log API keys or full authorization headers.
 - Prefer small deterministic helpers over model-dependent repair behavior.
+- Keep repair and `<think>` stripping safety checks always on; do not add config
+  switches that can leak invalid client-visible output.
 - Add or update tests for every behavior change in orchestration or repair.
 
 ## Common Tasks

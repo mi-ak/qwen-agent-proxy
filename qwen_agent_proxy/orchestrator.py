@@ -19,6 +19,7 @@ from qwen_agent_proxy.repair import (
     extract_tool_calls_from_reasoning_content,
     extract_xml_tool_calls,
     normalize_tool_calls,
+    strip_client_visible_artifacts,
     strip_think,
 )
 
@@ -77,7 +78,7 @@ class QwenAgentOrchestrator:
                 messages=messages,
                 component=self.settings.finalizer,
             )
-            content = strip_think(extract_content(upstream_response))
+            content = strip_client_visible_artifacts(extract_content(upstream_response))
             return chat_completion_response(model=self.settings.agent.public_model_id, content=content)
 
         planner_decision = await self._plan(messages, tools, has_results)
@@ -178,7 +179,7 @@ class QwenAgentOrchestrator:
                     tool_calls=tool_calls,
                 )
 
-        content = strip_think(extract_content(upstream_response))
+        content = strip_client_visible_artifacts(extract_content(upstream_response))
         return chat_completion_response(model=self.settings.agent.public_model_id, content=content)
 
 
