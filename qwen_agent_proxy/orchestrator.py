@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import asyncio
+import contextlib
 import json
 import logging
 import re
@@ -81,7 +83,12 @@ class QwenAgentOrchestrator:
             content = strip_client_visible_artifacts(extract_content(upstream_response))
             return chat_completion_response(model=self.settings.agent.public_model_id, content=content)
 
-        planner_decision = await self._plan(messages, tools, has_results)
+        parallel_tool_task = self._start_parallel_tool_call(messages, tools, has_results)
+        try:
+            planner_decision = await self._plan(messages, tools, has_results)
+        except BaseException:
+            await _discard_parallel_tool_task(parallel_tool_task)
+            raise
         LOGGER.info(
             "planner decision=%s candidate_tools=%s",
             planner_decision.decision,
@@ -96,12 +103,35 @@ class QwenAgentOrchestrator:
             return await self._finalize(messages, planner_decision, tools)
 
         if planner_decision.decision in {"need_tool", "continue_tool"}:
+            tool_response = _finished_parallel_tool_response(parallel_tool_task)
+            if tool_response is not None:
+                return tool_response
+            await _discard_parallel_tool_task(parallel_tool_task)
             tool_response = await self._tool_call(messages, tools, planner_decision)
             if tool_response is not None:
                 return tool_response
             return await self._finalize(messages, planner_decision, tools)
 
+        await _discard_parallel_tool_task(parallel_tool_task)
         return await self._finalize(messages, planner_decision, tools)
+
+    def _start_parallel_tool_call(
+        self,
+        messages: list[dict[str, Any]],
+        tools: list[dict[str, Any]],
+        has_results: bool,
+    ) -> asyncio.Task[dict[str, Any] | None] | None:
+        if has_results or not self.settings.agent.parallel_tool_call:
+            return None
+        LOGGER.info("starting parallel tool caller first attempt")
+        return asyncio.create_task(
+            self._tool_call_attempt(
+                messages,
+                tools,
+                fallback_planner_decision(has_tools=True, has_tool_results=False),
+                retry_count=0,
+            )
+        )
 
     async def _plan(
         self,
@@ -131,32 +161,64 @@ class QwenAgentOrchestrator:
         max_retries = max(0, self.settings.agent.max_tool_retries)
 
         for retry_count in range(max_retries + 1):
-            LOGGER.info("tool caller retry_count=%s", retry_count)
-            upstream_response = await self.upstream.chat_completion(
-                messages=tool_caller_messages(
-                    messages,
-                    planner_decision.tool_instruction,
-                    retry_count,
-                ),
-                component=self.settings.tool_caller,
-                tools=tools,
-                tool_choice="auto",
+            tool_response = await self._tool_call_attempt(
+                messages,
+                tools,
+                planner_decision,
+                retry_count,
+                allowed_names=allowed_names,
             )
-            tool_message = first_choice_message(upstream_response)
-            rejected_tool_names = _rejected_tool_names(tool_message, allowed_names)
-            tool_calls = normalize_tool_calls(tool_message, allowed_names)
-            LOGGER.info(
-                "repaired tool_calls count=%s rejected_tool_names=%s rejected_or_missing=%s",
-                len(tool_calls),
-                rejected_tool_names,
-                not bool(tool_calls),
-            )
-            if tool_calls:
-                return chat_completion_response(
-                    model=self.settings.agent.public_model_id,
-                    tool_calls=tool_calls,
-                )
+            if tool_response is not None:
+                return tool_response
 
+        return None
+
+    async def _tool_call_attempt(
+        self,
+        messages: list[dict[str, Any]],
+        tools: list[dict[str, Any]],
+        planner_decision: PlannerDecision,
+        retry_count: int,
+        allowed_names: set[str] | None = None,
+    ) -> dict[str, Any] | None:
+        allowed_names = allowed_names or allowed_tool_names(tools)
+        LOGGER.info("tool caller retry_count=%s", retry_count)
+        upstream_response = await self.upstream.chat_completion(
+            messages=tool_caller_messages(
+                messages,
+                planner_decision.tool_instruction,
+                retry_count,
+            ),
+            component=self.settings.tool_caller,
+            tools=tools,
+            tool_choice="auto",
+        )
+        tool_message = first_choice_message(upstream_response)
+        rejected_tool_names = _rejected_tool_names(tool_message, allowed_names)
+        tool_calls = normalize_tool_calls(tool_message, allowed_names)
+        LOGGER.info(
+            "repaired tool_calls count=%s rejected_tool_names=%s rejected_or_missing=%s",
+            len(tool_calls),
+            rejected_tool_names,
+            not bool(tool_calls),
+        )
+        if rejected_tool_names:
+            LOGGER.warning(
+                "tool caller rejected unknown tool names retry_count=%s rejected_tool_names=%s",
+                retry_count,
+                rejected_tool_names,
+            )
+        if not tool_calls:
+            LOGGER.warning(
+                "tool caller repaired tool_calls count=0 retry_count=%s rejected_tool_names=%s",
+                retry_count,
+                rejected_tool_names,
+            )
+        if tool_calls:
+            return chat_completion_response(
+                model=self.settings.agent.public_model_id,
+                tool_calls=tool_calls,
+            )
         return None
 
     async def _finalize(
@@ -181,6 +243,36 @@ class QwenAgentOrchestrator:
 
         content = strip_client_visible_artifacts(extract_content(upstream_response))
         return chat_completion_response(model=self.settings.agent.public_model_id, content=content)
+
+
+def _finished_parallel_tool_response(
+    task: asyncio.Task[dict[str, Any] | None] | None,
+) -> dict[str, Any] | None:
+    if task is None or not task.done():
+        return None
+    if task.cancelled():
+        return None
+    try:
+        return task.result()
+    except Exception as exc:
+        LOGGER.warning("parallel tool caller first attempt failed: %s", exc)
+        return None
+
+
+async def _discard_parallel_tool_task(
+    task: asyncio.Task[dict[str, Any] | None] | None,
+) -> None:
+    if task is None:
+        return
+    if task.done():
+        if task.cancelled():
+            return
+        with contextlib.suppress(Exception):
+            task.result()
+        return
+    task.cancel()
+    with contextlib.suppress(asyncio.CancelledError):
+        await task
 
 
 def parse_planner_output(

@@ -9,6 +9,7 @@ from qwen_agent_proxy.config import ComponentConfig, UpstreamConfig
 from qwen_agent_proxy.logging_utils import redact_headers
 
 LOGGER = logging.getLogger(__name__)
+DEFAULT_PROVIDER_NAME = "default"
 
 
 class UpstreamError(RuntimeError):
@@ -16,9 +17,15 @@ class UpstreamError(RuntimeError):
 
 
 class OpenAICompatibleUpstream:
-    def __init__(self, config: UpstreamConfig, log_upstream: bool = True) -> None:
+    def __init__(
+        self,
+        config: UpstreamConfig,
+        log_upstream: bool = True,
+        providers: dict[str, UpstreamConfig] | None = None,
+    ) -> None:
         self.config = config
         self.log_upstream = log_upstream
+        self.providers = providers or {}
 
     async def chat_completion(
         self,
@@ -28,32 +35,25 @@ class OpenAICompatibleUpstream:
         tools: list[dict[str, Any]] | None = None,
         tool_choice: str | dict[str, Any] | None = None,
     ) -> dict[str, Any]:
-        url = f"{self.config.base_url.rstrip('/')}/chat/completions"
-        headers = {
-            "Authorization": f"Bearer {self.config.api_key}",
-            "Content-Type": "application/json",
-        }
-        payload: dict[str, Any] = {
-            "model": self.config.model,
-            "messages": messages,
-            "temperature": component.temperature,
-            "max_tokens": component.max_tokens,
-            "stream": False,
-        }
-        if tools:
-            payload["tools"] = tools
-        if tool_choice is not None:
-            payload["tool_choice"] = tool_choice
-
-        self._apply_thinking_param(payload, component.enable_thinking)
+        provider_name, provider, url, headers, payload = self._build_request(
+            messages=messages,
+            component=component,
+            tools=tools,
+            tool_choice=tool_choice,
+        )
 
         if self.log_upstream:
             LOGGER.info(
-                "upstream request url=%s messages=%s tools=%s thinking_style=%s headers=%s",
+                (
+                    "upstream request provider=%s url=%s model=%s messages=%s tools=%s "
+                    "thinking_style=%s headers=%s"
+                ),
+                provider_name,
                 url,
+                payload["model"],
                 len(messages),
                 len(tools or []),
-                self.config.thinking_param_style,
+                provider.thinking_param_style,
                 redact_headers(headers),
             )
 
@@ -79,8 +79,51 @@ class OpenAICompatibleUpstream:
             raise UpstreamError("upstream returned invalid response shape")
         return data
 
-    def _apply_thinking_param(self, payload: dict[str, Any], enable_thinking: bool) -> None:
-        style = self.config.thinking_param_style
+    def _build_request(
+        self,
+        *,
+        messages: list[dict[str, Any]],
+        component: ComponentConfig,
+        tools: list[dict[str, Any]] | None = None,
+        tool_choice: str | dict[str, Any] | None = None,
+    ) -> tuple[str, UpstreamConfig, str, dict[str, str], dict[str, Any]]:
+        provider_name, provider = self._resolve_provider(component.provider)
+        url = f"{provider.base_url.rstrip('/')}/chat/completions"
+        headers = {
+            "Authorization": f"Bearer {provider.api_key}",
+            "Content-Type": "application/json",
+        }
+        payload: dict[str, Any] = {
+            "model": component.model or provider.model,
+            "messages": messages,
+            "temperature": component.temperature,
+            "max_tokens": component.max_tokens,
+            "stream": False,
+        }
+        if tools:
+            payload["tools"] = tools
+        if tool_choice is not None:
+            payload["tool_choice"] = tool_choice
+
+        self._apply_thinking_param(payload, component.enable_thinking, provider)
+        return provider_name, provider, url, headers, payload
+
+    def _resolve_provider(self, provider_name: str | None) -> tuple[str, UpstreamConfig]:
+        name = provider_name or DEFAULT_PROVIDER_NAME
+        if name == DEFAULT_PROVIDER_NAME:
+            return DEFAULT_PROVIDER_NAME, self.config
+        provider = self.providers.get(name)
+        if provider is None:
+            raise UpstreamError(f"unknown upstream provider: {name}")
+        return name, provider
+
+    def _apply_thinking_param(
+        self,
+        payload: dict[str, Any],
+        enable_thinking: bool,
+        provider: UpstreamConfig | None = None,
+    ) -> None:
+        style = (provider or self.config).thinking_param_style
         if style == "chat_template_kwargs":
             payload["chat_template_kwargs"] = {"enable_thinking": enable_thinking}
         elif style == "extra_body_chat_template_kwargs":

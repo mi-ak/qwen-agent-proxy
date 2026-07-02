@@ -44,7 +44,7 @@ qwen-agent-proxy
   `-- Finalizer    : reasoning on,  no tools
   |
   v
-OpenAI-compatible Qwen API
+OpenAI-compatible upstream provider(s)
 ```
 
 Planner decides whether a tool is needed. Tool Caller emits only tool calls.
@@ -85,27 +85,59 @@ api_key = "dummy"
 model = "Qwen/Qwen3-8B"
 thinking_param_style = "chat_template_kwargs"
 
+# Optional named providers inherit missing values from [upstream].
+# [providers.fast_tools]
+# base_url = "http://127.0.0.1:8001/v1"
+# api_key = "dummy"
+# model = "Qwen/Qwen3-4B"
+# thinking_param_style = "disabled"
+
 [agent]
 public_model_id = "qwen-agent"
 max_tool_retries = 2
+parallel_tool_call = false
 log_requests = true
 log_upstream = true
 
 [planner]
+# provider = "default"
+# model = "Qwen/Qwen3-14B"
 enable_thinking = true
 temperature = 0.2
 max_tokens = 4096
 
 [tool_caller]
+# provider = "fast_tools"
+# model = "Qwen/Qwen3-4B"
 enable_thinking = false
 temperature = 0.0
 max_tokens = 2048
 
 [finalizer]
+# provider = "default"
+# model = "Qwen/Qwen3-14B"
 enable_thinking = true
 temperature = 0.3
 max_tokens = 8192
 ```
+
+`[upstream]` is always the `default` provider. Add `[providers.<name>]` blocks
+when a component should use a different OpenAI-compatible endpoint, API key,
+thinking parameter style, or default model. Named providers inherit missing
+values from `[upstream]`.
+
+Each internal component can set:
+
+- `provider`: provider name, defaulting to `default`
+- `model`: optional per-component model override; if omitted, the provider's
+  model is used
+
+`parallel_tool_call = true` starts a speculative first Tool Caller attempt while
+Planner is still running for tool-enabled requests without tool results. The
+proxy only returns that tool call if Planner also decides a tool is needed; if
+Planner finishes first or decides to answer directly, the speculative result is
+discarded. This can reduce latency when Planner uses a slower reasoning model,
+at the cost of extra upstream work.
 
 `thinking_param_style` supports:
 
@@ -173,6 +205,27 @@ thinking_param_style = "disabled"
 Some local servers expose their own non-standard thinking switch. If an upstream
 rejects unknown fields, set `thinking_param_style = "disabled"` or use the
 server's non-thinking chat template for Tool Caller traffic.
+
+You can also split components across providers:
+
+```toml
+[upstream]
+base_url = "http://127.0.0.1:8000/v1"
+api_key = "dummy"
+model = "Qwen/Qwen3-14B"
+thinking_param_style = "chat_template_kwargs"
+
+[providers.fast_tools]
+base_url = "http://127.0.0.1:8001/v1"
+model = "Qwen/Qwen3-4B"
+thinking_param_style = "disabled"
+
+[tool_caller]
+provider = "fast_tools"
+enable_thinking = false
+temperature = 0.0
+max_tokens = 2048
+```
 
 ## VS Code BYOK
 
@@ -280,6 +333,7 @@ The service logs:
 - whether tool results are present
 - planner decision and candidate tools
 - tool caller retry count
+- upstream provider and model
 - repaired tool call count
 - upstream status or error
 

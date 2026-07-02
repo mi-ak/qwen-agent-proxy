@@ -4,23 +4,37 @@ api_key = "<dummy>"
 model = "<your model name>"
 thinking_param_style = "chat_template_kwargs"
 
+# Optional named providers inherit missing values from [upstream].
+# [providers.fast_tools]
+# base_url = "http://127.0.0.1:8001/v1"
+# api_key = "<dummy>"
+# model = "<your fast tool-calling model>"
+# thinking_param_style = "disabled"
+
 [agent]
 public_model_id = "qwen-agent"
 max_tool_retries = 2
+parallel_tool_call = false
 log_requests = true
 log_upstream = true
 
 [planner]
+# provider = "default"
+# model = "<planner override model>"
 enable_thinking = true
 temperature = 0.2
 max_tokens = 4096
 
 [tool_caller]
+# provider = "fast_tools"
+# model = "<tool caller override model>"
 enable_thinking = false
 temperature = 0.0
 max_tokens = 2048
 
 [finalizer]
+# provider = "default"
+# model = "<finalizer override model>"
 enable_thinking = true
 temperature = 0.3
 max_tokens = 8192

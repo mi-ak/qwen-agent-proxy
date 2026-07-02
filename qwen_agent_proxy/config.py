@@ -21,12 +21,15 @@ class UpstreamConfig:
 class AgentConfig:
     public_model_id: str = "qwen-agent"
     max_tool_retries: int = 2
+    parallel_tool_call: bool = False
     log_requests: bool = True
     log_upstream: bool = True
 
 
 @dataclass(slots=True)
 class ComponentConfig:
+    provider: str = "default"
+    model: str | None = None
     enable_thinking: bool = True
     temperature: float = 0.2
     max_tokens: int = 4096
@@ -35,6 +38,7 @@ class ComponentConfig:
 @dataclass(slots=True)
 class Settings:
     upstream: UpstreamConfig
+    providers: dict[str, UpstreamConfig]
     agent: AgentConfig
     planner: ComponentConfig
     tool_caller: ComponentConfig
@@ -44,6 +48,7 @@ class Settings:
 def default_settings() -> Settings:
     return Settings(
         upstream=UpstreamConfig(),
+        providers={},
         agent=AgentConfig(),
         planner=ComponentConfig(enable_thinking=True, temperature=0.2, max_tokens=4096),
         tool_caller=ComponentConfig(enable_thinking=False, temperature=0.0, max_tokens=2048),
@@ -60,18 +65,34 @@ def _section_to_dataclass(instance: Any, values: dict[str, Any]) -> Any:
 
 
 def apply_config(settings: Settings, data: dict[str, Any]) -> Settings:
-    section_names = {
+    section_names = (
         "upstream",
         "agent",
         "planner",
         "tool_caller",
         "finalizer",
-    }
+    )
     for section in section_names:
         values = data.get(section)
         if isinstance(values, dict):
             _section_to_dataclass(getattr(settings, section), values)
+    providers = data.get("providers")
+    if isinstance(providers, dict):
+        settings.providers = _providers_from_config(settings.upstream, providers)
     return settings
+
+
+def _providers_from_config(
+    default_provider: UpstreamConfig,
+    values: dict[str, Any],
+) -> dict[str, UpstreamConfig]:
+    providers: dict[str, UpstreamConfig] = {}
+    for name, provider_values in values.items():
+        if not isinstance(name, str) or not isinstance(provider_values, dict):
+            continue
+        provider = copy.deepcopy(default_provider)
+        providers[name] = _section_to_dataclass(provider, provider_values)
+    return providers
 
 
 def load_config(path: str | Path | None = None) -> Settings:

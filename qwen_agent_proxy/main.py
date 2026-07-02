@@ -15,7 +15,11 @@ from qwen_agent_proxy.upstream import OpenAICompatibleUpstream, UpstreamError
 configure_logging()
 
 settings = load_config()
-upstream = OpenAICompatibleUpstream(settings.upstream, log_upstream=settings.agent.log_upstream)
+upstream = OpenAICompatibleUpstream(
+    settings.upstream,
+    log_upstream=settings.agent.log_upstream,
+    providers=settings.providers,
+)
 orchestrator = QwenAgentOrchestrator(settings, upstream)
 app = FastAPI(title="qwen-agent-proxy", version="0.1.0")
 
